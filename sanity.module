@@ -68,7 +68,11 @@ function sanity_requirements($phase) {
  * Implements hook_cron().
  */
 function sanity_cron() {
-  $sanity = sanity_check(variable_get('sanity_cron', FALSE));
+  // If sanity-on-cron is enabled, then we run a normal check (NULL) where the
+  // timer decides whether to refresh or not. If sanity-on-cron is disabled, we
+  // only get current results, not refreshing even if the sanity cache is stale.
+  $refresh = variable_get('sanity_cron', FALSE) ? NULL : FALSE;
+  $sanity = sanity_check($refresh);
   if (variable_get('sanity_email_warnings', FALSE)) {
     sanity_email_warning($sanity);
   }
@@ -98,7 +102,7 @@ function sanity_check($refresh = NULL) {
   $created = $cache ? $cache->created : 0;
   $expire = $cache ? $cache->created + variable_get('sanity_refresh_timer', 86400) : 0;
 
-  if ($refresh !== TRUE && $cache && REQUEST_TIME < $expire) {
+  if (!$refresh && $cache && REQUEST_TIME < $expire) {
     return $cache->data;
   }
   elseif ($refresh !== FALSE) {
@@ -232,8 +236,8 @@ function sanity_check_page() {
     '#theme' => 'table',
     '#header' => [
       'Type',
-      'Message',
       'Link',
+      'Message',
     ],
     '#attributes' => [
       'class' => ['system-status-report'],
@@ -255,13 +259,13 @@ function sanity_table_row($result, $key = '') {
   }
 
   $cells[0] = empty($result->type) ? $key : $result->type;
-  $cells[1] = $result->message;
   if (!empty($result->link_raw)) {
-    $cells[2] = filter_xss($result->link_raw);
+    $cells[1] = filter_xss($result->link_raw);
   }
   else {
-    $cells[2] = !empty($result->link_text) ? l($result->link_text, $result->link_path, $result->link_opts) : '';
+    $cells[1] = !empty($result->link_text) ? l($result->link_text, $result->link_path, $result->link_opts) : '';
   }
+  $cells[2] = $result->message;
 
   $row['class'] = [sanity_severity_class($result->severity)];
   $row['no_striping'] = TRUE;
