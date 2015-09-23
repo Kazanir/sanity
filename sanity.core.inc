@@ -5,7 +5,7 @@
  */
 
 /**
- * Implements hook_sanity for the field module.
+ * Implements hook_sanity() for the field module.
  */
 function field_sanity() {
   $items = [];
@@ -103,4 +103,41 @@ function field_sanity_field_revision_cb($row) {
  */
 function field_sanity_tname() {
   return 'Tables_in_' . db_query('SELECT DATABASE()')->fetchField();
+}
+
+/**
+ * Implements hook_sanity() for the system module.
+ */
+function system_sanity() {
+  $items = [];
+
+  // Find filenames in the system table that don't exist in the
+  // various modules directories, because they give simpletest fits.
+  $items['system non-existent filenames'] = array(
+    'results_cb' => 'system_sanity_filename_cb',
+  );
+
+  return $items;
+}
+
+/**
+ * Check whether system:filename exists in module directories.
+ */
+function system_sanity_filename_cb() {
+
+  $report = array();
+  $result = db_query('SELECT filename FROM system');
+  foreach ($result as $row) {
+    if (is_readable(DRUPAL_ROOT . '/' .$row->filename)) {
+      continue;
+    }
+
+    // This row contains an unreadable or non-existent filename.
+    // Produce a diagnostic.
+    $o = new stdClass();
+    $o->message = $row->filename;
+    $o->type = 'system table filename non-existent or unreadable';
+    $report[] = $o;
+  }
+  return $report;
 }
