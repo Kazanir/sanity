@@ -128,16 +128,15 @@ function system_sanity_filename_cb() {
   $report = array();
   $result = db_query('SELECT filename FROM system');
   foreach ($result as $row) {
-    if (is_readable(DRUPAL_ROOT . '/' .$row->filename)) {
-      continue;
-    }
+    if (!is_readable(DRUPAL_ROOT . '/' .$row->filename)) {
 
-    // This row contains an unreadable or non-existent filename.
-    // Produce a diagnostic.
-    $o = new stdClass();
-    $o->message = $row->filename;
-    $o->type = 'system table filename non-existent or unreadable';
-    $report[] = $o;
+      // This row contains an unreadable or non-existent filename.
+      // Produce a diagnostic.
+      $o = new stdClass();
+      $o->message = $row->filename;
+      $o->type = 'system table filename non-existent or unreadable';
+      $report[] = $o;
+    }
   }
   return $report;
 }
