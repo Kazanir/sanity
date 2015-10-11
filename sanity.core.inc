@@ -2,6 +2,7 @@
 /**
  * @file
  * sanity module hooks for core modules
+ * @todo Report nodes with NULL vid
  */
 
 /**
@@ -139,4 +140,51 @@ function system_sanity_filename_cb() {
     }
   }
   return $report;
+}
+
+/**
+ * Implements hook_sanity() for the node module.
+ */
+function node_sanity() {
+  $items = [];
+
+  // Find orphan node table rows. If there is a row nid=x in
+  // node but no row nid=x in node_revision, the row in node
+  // is an orphan.
+  $items['orphan node nid'] = array(
+    'query' => 'SELECT nid FROM {node} WHERE nid NOT IN'
+      . '(SELECT nid FROM {node_revision})',
+    'fetch_cb' => 'node_sanity_orphan_node_cb',
+  );
+
+  // Find orphan node_revision table rows. If there is a row nid=x in
+  // node_revision but no row nid=x in node, the row in node_revision
+  // is an orphan.
+  $items['orphan node_revision nid'] = array(
+    'query' => 'SELECT nid FROM {node_revision} WHERE nid NOT IN'
+      . '(SELECT nid FROM {node})',
+    'fetch_cb' => 'node_sanity_orphan_node_revision_cb',
+  );
+
+  return $items;
+}
+
+/**
+ * Callback to report orphan rows in node table.
+ */
+function node_sanity_orphan_node_cb($row) {
+  $o = new stdClass();
+  $o->message = 'nid=' . $row->nid;
+  $o->type = 'node table orphan row';
+  return $o;
+}
+
+/**
+ * Callback to report orphan rows in node_revision table.
+ */
+function node_sanity_orphan_node_revision_cb($row) {
+  $o = new stdClass();
+  $o->message = 'nid=' . $row->nid;
+  $o->type = 'node_revision table orphan row';
+  return $o;
 }
