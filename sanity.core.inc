@@ -148,12 +148,13 @@ function system_sanity_filename_cb() {
 function node_sanity() {
   $items = [];
 
-  // Find orphan node table rows. If there is a row nid=x in
-  // node but no row nid=x in node_revision, the row in node
-  // is an orphan.
+  // Find orphan node table rows. If there is a row nid=n, vid=v in
+  // node but no corresponding row nid=n, vid=v in node_revision,
+  // the row in node is an orphan.
   $items['orphan node nid'] = array(
-    'query' => 'SELECT nid FROM {node} WHERE nid NOT IN'
-      . '(SELECT nid FROM {node_revision})',
+    'query' => 'SELECT nid FROM {node} AS n WHERE NOT EXISTS'
+      . ' (SELECT * FROM {node_revision} AS nr WHERE n.nid = nr.nid'
+      . ' AND n.vid = nr.vid)',
     'fetch_cb' => 'node_sanity_orphan_node_cb',
   );
 
