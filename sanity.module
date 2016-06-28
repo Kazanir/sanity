@@ -41,7 +41,37 @@ function sanity_menu() {
     'access arguments' => ['access site reports'],
   ];
 
+  $sanity = sanity_get_checks(TRUE);
+  $groups = array_filter(array_map(function($c) { return @$c['group']; }, $sanity));
+
+  $default = FALSE;
+  foreach ($groups as $g) {
+    $default = TRUE;
+    $items['admin/reports/sanity/view/' . strtolower($g)] = [
+      'title' => $g,
+      'page callback' => 'sanity_check_page',
+      'page arguments' => array($g),
+      'access arguments' => ['access site reports'],
+      'type' => MENU_LOCAL_TASK,
+    ];
+  }
+  if ($default) {
+    $items['admin/reports/sanity/view/all'] = [
+      'title' => t('All'),
+      'page callback' => 'sanity_check_page',
+      'type' => MENU_DEFAULT_LOCAL_TASK,
+      'access arguments' => ['access site reports'],
+    ];
+  }
+
   return $items;
+}
+
+/**
+ * Title callback for sanity subpages.
+ */
+function sanity_group_title($group) {
+  return "Sanity Report: $group";
 }
 
 /**
@@ -50,13 +80,25 @@ function sanity_menu() {
 function sanity_requirements($phase) {
   if ($phase == 'runtime') {
     $sanity = sanity_check();
-    $reqs = [];
+    $fails = array_unique(
+      array_map(function($r) { return $r->skey; }, $sanity)
+    );
+
 
     if (!empty($sanity)) {
       $reqs['sanity_check'] = [
         'title' => t('Sanity Check'),
         'value' => t('Sanity check failed!'),
-        'description' => t('The following sanity checks on your site have failed: ') . implode(', ', array_keys($sanity)),
+        'description' => t('The following sanity checks on your site have failed: ') . implode(', ', $fails),
+        'severity' => REQUIREMENT_ERROR,
+      ];
+    }
+    else {
+      $reqs['sanity_check'] = [
+        'title' => t('Sanity Check'),
+        'value' => t('Sanity check passed!'),
+        'description' => t('All sanity checks defined for your site have passed.'),
+        'severity' => REQUIREMENT_OK,
       ];
     }
 
@@ -88,73 +130,203 @@ function sanity_views_api() {
   ];
 }
 
+/**
+ * Implements hook_menu_local_tasks_alter().
+ */
+function sanity_menu_local_tasks_alter(&$data, $router_item, $root_path) {
+  if ($router_item['tab_root'] == 'admin/reports/sanity' && !empty($data['tabs'][1]['count'])) {
+    foreach ($data['tabs'][1]['output'] as &$tab) {
+      $args = unserialize($tab['#link']['page_arguments']);
+      $arg = reset($args);
+      if ($arg == 'all') {
+        $num = count(sanity_current_report());
+      }
+      else {
+        $num = count(sanity_current_report($arg));
+      }
+      $tab['#link']['title'] .= " ($num)";
+    }
+  }
+}
+
+/**
+ * Implements hook_cron_queue_info().
+ */
+function sanity_cron_queue_info() {
+  if (variable_get('sanity_advancedqueue', module_exists('advancedqueue'))) {
+    return;
+  }
+
+  $items = [];
+  $items['sanity_check_reports'] = [
+    'worker callback' => 'sanity_check_queue_callback',
+    'time' => 60,
+  ];
+
+  return $items;
+}
+
+/**
+ * Implements hook_advancedqueue_info().
+ */
+function sanity_advanced_queue_info() {
+  $items = [];
+
+  $items['sanity_check_reports'] = [
+    'label' => 'Sanity check reports',
+    'worker callback' => 'sanity_check_advancedqueue_callback',
+  ];
+
+  return $items;
+}
+
 // Logic
 
 /**
  * Get sanity check results.
  */
-function sanity_check($refresh = NULL) {
-  // By default, this function tries to refresh only if there is no cached data
-  // or the cached data is expired. A refresh can be forced by setting $refresh
-  // to TRUE and a refresh can be skipped (even if there is no data) by setting
-  // $refresh to FALSE.
-  $cache = cache_get('sanity_check');
-  $created = $cache ? $cache->created : 0;
-  $expire = $cache ? $cache->created + variable_get('sanity_refresh_timer', 86400) : 0;
+function sanity_check($refresh = NULL, $group = NULL) {
+  // By default, this function tries to refresh only if the timer is expired or
+  // the sanity check has never been run. A refresh can be forced by setting
+  // $refresh to TRUE and a refresh can be skipped (even if there is no data) by
+  // setting $refresh to FALSE.
+  $last = variable_get('sanity_last_refreshed', 0);
+  $expire = $last + variable_get('sanity_refresh_timer', 86400);
 
-  if (!$refresh && $cache && REQUEST_TIME < $expire) {
-    return $cache->data;
+  if (!$refresh && REQUEST_TIME < $expire) {
+    return sanity_current_report($group);
   }
   elseif ($refresh !== FALSE) {
-    return sanity_refresh($created);
+    sanity_refresh();
+    return sanity_current_report($group);
   }
   else {
-    return [];
+    return sanity_current_report($group);
   }
+}
+
+/**
+ * Get current sanity report table results.
+ */
+function sanity_current_report($group = NULL) {
+  $query_where = $group ? " WHERE sgroup = :group " : "";
+  $query = db_select('sanity_report', 's')
+    ->fields('s')
+    ->orderBy('s.sgroup', 'ASC')
+    ->orderBy('s.skey', 'ASC')
+    ->orderBy('s.type', 'ASC');
+  if ($group) {
+    $query->condition('sgroup', $group);
+  }
+
+  $results = $query->execute();
+
+  return $results->fetchAll();
+}
+
+/**
+ * Get defined sanity checks.
+ */
+function sanity_get_checks($flatten = FALSE) {
+  $last_refreshed = variable_get('sanity_last_refreshed', 0);
+  foreach (module_implements('sanity') as $module) {
+    $checks = module_invoke($module, 'sanity', $last_refreshed);
+    foreach ($checks as &$check) {
+      $check += [
+        'query' => FALSE,
+        'fetch_cb' => '',
+        'params' => [],
+        'results_cb' => '',
+        'uses_keys' => FALSE,
+        'group' => NULL,
+      ];
+    }
+    $sanity[$module] = $checks;
+  }
+
+  drupal_alter('sanity', $sanity);
+
+  if ($flatten) {
+    $sanity = array_merge(...array_values($sanity));
+  }
+
+  return $sanity;
 }
 
 /**
  * Refresh sanity check.
  */
-function sanity_refresh($last_refreshed) {
-  $checks = module_invoke_all('sanity', $last_refreshed);
+function sanity_refresh() {
+  $sanity = sanity_get_checks();
 
-  $sanity = [];
+  $queue = DrupalQueue::get('sanity_check_reports');
 
-  foreach ($checks as $key => $check) {
-    $check += [
-      'query' => FALSE,
-      'fetch_cb' => '',
-      'params' => [],
-      'results_cb' => '',
-    ];
+  foreach ($sanity as $module => $checks) {
+    foreach ($checks as $key => $check) {
+      $data = [
+        'check' => $check,
+        'key' => $key,
+        'module' => $module,
+      ];
 
-    $results = [];
+      $queue->createItem($data);
 
-    if ($check['query']) {
-      $stmt = db_query($check['query'], $check['params']);
-      $queried = $stmt->fetchAll();
-      $results = ($check['fetch_cb'] ? array_map($check['fetch_cb'], $queried) : $queried);
-    }
-    else {
-      if (function_exists($check['results_cb'])) {
-        $results = call_user_func_array($check['results_cb'], $check['params']);
-      }
-      else {
-        $results = [];
-      }
-    }
-
-    if (!empty($results)) {
-      $sanity[$key] = $results;
     }
   }
 
-  // We don't want this cache cleared automatically; we use it to track the
-  // last-checked time.
-  cache_set('sanity_check', $sanity, 'cache', CACHE_PERMANENT);
+  variable_set('sanity_last_refreshed', REQUEST_TIME);
+}
 
-  return $sanity;
+/**
+ * Sanity check queue callback. Processes a single sanity check.
+ */
+function sanity_check_queue_callback($data, &$message = NULL) {
+  $now = time();
+  $check = $data['check'];
+  $key = $data['key'];
+  $module = $data['module'];
+  module_load_include('inc', $module, "$module.sanity");
+
+  if ($check['query']) {
+    $stmt = db_query($check['query'], $check['params']);
+    $queried = $stmt->fetchAll();
+    $results = ($check['fetch_cb'] ? array_map($check['fetch_cb'], $queried) : $queried);
+  }
+  else {
+    if (function_exists($check['results_cb'])) {
+      $results = call_user_func_array($check['results_cb'], $check['params']);
+    }
+    else {
+      $results = [];
+    }
+  }
+
+  if (!empty($results)) {
+    foreach ($results as $r) {
+      $r->created = $now;
+      $r->sgroup = $check['group'];
+      $r->skey = $key;
+
+      drupal_write_record('sanity_report', $r);
+    }
+
+    db_query("DELETE FROM sanity_report WHERE skey = :skey AND created < :now", [':skey' => $key, ':now' => $now]);
+  }
+
+  return TRUE;
+}
+
+/**
+ * Sanity check AQ callback. Wraps the main queue worker.
+ */
+function sanity_check_advancedqueue_callback($item) {
+  $message = '';
+  $status = sanity_check_queue_callback($item->data, $message);
+
+  return [
+    'status' => $status,
+    'result' => $message,
+  ];
 }
 
 // Pages
@@ -177,6 +349,13 @@ function sanity_settings_form($form, &$form_state) {
     '#default_value' => variable_get('sanity_cron', FALSE),
     '#title' => t('Sanity check cron'),
     '#description' => t('If enabled, the Sanity module will run a sanity check during every site cron run. Keep this in mind if you have a low sanity refresh rate, frequent crons, and expensive sanity checks.'),
+  ];
+
+  $form['sanity_advancedqueue'] = [
+    '#type' => 'checkbox',
+    '#default_value' => variable_get('sanity_advancedqueue', module_exists('advancedqueue')),
+    '#title' => t('Sanity check via AQ'),
+    '#description' => t('If enabled, Sanity refreshes will process via AdvancedQueue rather than normal cron runs.'),
   ];
 
   $form['sanity_email_warnings'] = [
@@ -217,22 +396,26 @@ function sanity_additional_emails_validate($element, &$form_state) {
 /**
  * Sanity check report page.
  */
-function sanity_check_page() {
-  $sanity = sanity_check();
+function sanity_check_page($group = NULL) {
+  $sanity = sanity_check(NULL, $group);
   $rows = [];
-  foreach ($sanity as $key => $results) {
-    foreach ($results as $r) {
-      $rows[] = sanity_table_row($r, $key);
-    }
+  foreach ($sanity as $r) {
+    $r->link_opts = unserialize($r->link_opts);
+    $rows[] = sanity_table_row($r);
   }
 
   $page = [
     '#title' => t('Sanity Check Results'),
-      '#theme' => 'page',
-      '#type' => 'page',
-      '#show_message' => TRUE,
-    ];
-  $page['content'] = [
+    '#theme' => 'page',
+    '#type' => 'page',
+    '#show_message' => TRUE,
+  ];
+
+  $queue = DrupalQueue::get('sanity_check_reports');
+  if ($num = $queue->numberOfItems()) {
+    drupal_set_message("There are currently $num sanity reports in the queue. Please refresh this page soon to see an updated report.", 'warning', FALSE);
+  }
+  $page['content']['report'] = [
     '#theme' => 'table',
     '#header' => [
       'Type',
@@ -253,12 +436,12 @@ function sanity_check_page() {
 /**
  * Turn a sanity result object into a table row.
  */
-function sanity_table_row($result, $key = '') {
+function sanity_table_row($result) {
   if (empty($result->severity)) {
     $result->severity = WATCHDOG_WARNING;
   }
 
-  $cells[0] = empty($result->type) ? $key : $result->type;
+  $cells[0] = empty($result->type) ? $result->skey : $result->type;
   if (!empty($result->link_raw)) {
     $cells[1] = filter_xss($result->link_raw);
   }
@@ -311,6 +494,7 @@ function dblog_sanity($last_refreshed) {
       ':sev' => WATCHDOG_ERROR,
     ],
     'fetch_cb' => 'dblog_sanity_prepare',
+    'group' => 'Watchdog',
   ];
 
   return $items;

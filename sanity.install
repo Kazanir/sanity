@@ -1,0 +1,89 @@
+<?php
+
+/**
+ * Implements hook_schema().
+ */
+function sanity_schema() {
+  $schema = [];
+
+  $schema['sanity_report'] = [
+    'fields' => [
+      'id' => [
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'size' => 'big',
+        'not null' => TRUE,
+      ],
+      'type' => [
+        'type' => 'varchar',
+        'length' => 128,
+        'not null' => TRUE,
+      ],
+      'severity' => [
+        'type' => 'int',
+        'size' => 'tiny',
+        'not null' => TRUE,
+      ],
+      'skey' => [
+        'type' => 'varchar',
+        'length' => 128,
+        'not null' => TRUE,
+
+      ],
+      'sgroup' => [
+        'type' => 'varchar',
+        'length' => 128,
+        'not null' => FALSE,
+      ],
+      'created' => [
+        'type' => 'int',
+        'size' => 'big',
+        'not null' => TRUE,
+      ],
+      'message' => [
+        'type' => 'text',
+        'size' => 'normal',
+        'not null' => FALSE,
+      ],
+      'link_raw' => [
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => FALSE,
+      ],
+      'link_text' => [
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => FALSE,
+      ],
+      'link_path' => [
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => FALSE,
+      ],
+      'link_opts' => [
+        'type' => 'text',
+        'size' => 'normal',
+        'not null' => FALSE,
+        'serialize' => TRUE,
+      ],
+    ],
+    'primary key' => ['id'],
+    'indexes' => [
+      'skey' => ['skey'],
+      'sgroup' => ['sgroup'],
+    ],
+  ];
+
+  return $schema;
+}
+
+/**
+ * Install the new database table for sanity report storage.
+ */
+function sanity_update_7101(&$sandbox) {
+  $schema = sanity_schema();
+  db_create_table('sanity_report', $schema['sanity_report']);
+
+  return "Created {sanity_report} table in the database.";
+}
+
