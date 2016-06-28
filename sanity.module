@@ -42,7 +42,7 @@ function sanity_menu() {
   ];
 
   $sanity = sanity_get_checks(TRUE);
-  $groups = array_filter(array_map(function($c) { return @$c['group']; }, $sanity));
+  $groups = array_unique(array_filter(array_column($sanity, 'group')));
 
   $default = FALSE;
   foreach ($groups as $g) {
@@ -209,7 +209,6 @@ function sanity_check($refresh = NULL, $group = NULL) {
  * Get current sanity report table results.
  */
 function sanity_current_report($group = NULL) {
-  $query_where = $group ? " WHERE sgroup = :group " : "";
   $query = db_select('sanity_report', 's')
     ->fields('s')
     ->orderBy('s.sgroup', 'ASC')
@@ -280,7 +279,7 @@ function sanity_refresh() {
 /**
  * Sanity check queue callback. Processes a single sanity check.
  */
-function sanity_check_queue_callback($data, &$message = NULL) {
+function sanity_check_queue_callback($data) {
   $now = time();
   $check = $data['check'];
   $key = $data['key'];
@@ -310,7 +309,10 @@ function sanity_check_queue_callback($data, &$message = NULL) {
       drupal_write_record('sanity_report', $r);
     }
 
-    db_query("DELETE FROM sanity_report WHERE skey = :skey AND created < :now", [':skey' => $key, ':now' => $now]);
+    db_delete('sanity_report')
+      ->condition('created', $now, '<')
+      ->condition('skey', $key)
+      ->execute();
   }
 
   return TRUE;
@@ -320,12 +322,11 @@ function sanity_check_queue_callback($data, &$message = NULL) {
  * Sanity check AQ callback. Wraps the main queue worker.
  */
 function sanity_check_advancedqueue_callback($item) {
-  $message = '';
-  $status = sanity_check_queue_callback($item->data, $message);
+  $status = sanity_check_queue_callback($item->data);
 
   return [
     'status' => $status,
-    'result' => $message,
+    'result' => "Sanity check report completed for $data[key].",
   ];
 }
 
