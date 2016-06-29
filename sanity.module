@@ -326,7 +326,7 @@ function sanity_check_advancedqueue_callback($item) {
 
   return [
     'status' => $status,
-    'result' => "Sanity check report completed for $data[key].",
+    'result' => "Sanity check report completed for: " . $item->data['key'],
   ];
 }
 
