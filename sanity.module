@@ -301,18 +301,30 @@ function sanity_check_queue_callback($data) {
   }
 
   if (!empty($results)) {
-    foreach ($results as $r) {
-      $r->created = $now;
-      $r->sgroup = $check['group'];
-      $r->skey = $key;
+    // Wrap these writes in a transaction for a little speed gain.
+    $txn = db_transaction();
+    
+    try {
+      foreach ($results as $r) {
+        $r->created = $now;
+        $r->sgroup = $check['group'];
+        $r->skey = $key;
 
-      drupal_write_record('sanity_report', $r);
+        drupal_write_record('sanity_report', $r);
+      }
+
+      db_delete('sanity_report')
+        ->condition('created', $now, '<')
+        ->condition('skey', $key)
+        ->execute();
     }
-
-    db_delete('sanity_report')
-      ->condition('created', $now, '<')
-      ->condition('skey', $key)
-      ->execute();
+    catch (Exception $e) {
+      // Oh well. It was worth a shot.
+      $txn->rollBack();
+      throw $e;
+    }
+    
+    unset($txn);
   }
 
   return TRUE;
