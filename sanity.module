@@ -300,11 +300,10 @@ function sanity_check_queue_callback($data) {
     }
   }
 
-  if (!empty($results)) {
-    // Wrap these writes in a transaction for a little speed gain.
-    $txn = db_transaction();
-    
-    try {
+  // Wrap these writes in a transaction for a little speed gain.
+  $txn = db_transaction();
+  try {  
+    if (!empty($results)) {
       foreach ($results as $r) {
         $r->created = $now;
         $r->sgroup = $check['group'];
@@ -312,20 +311,20 @@ function sanity_check_queue_callback($data) {
 
         drupal_write_record('sanity_report', $r);
       }
-
-      db_delete('sanity_report')
-        ->condition('created', $now, '<')
-        ->condition('skey', $key)
-        ->execute();
     }
-    catch (Exception $e) {
-      // Oh well. It was worth a shot.
-      $txn->rollBack();
-      throw $e;
-    }
-    
-    unset($txn);
+    db_delete('sanity_report')
+      ->condition('created', $now, '<')
+      ->condition('skey', $key)
+      ->execute();
   }
+  catch (Exception $e) {
+    // Something went wrong. Leave the existing sanity records and fail the job.
+    // @TODO: Add better logging here.
+    $txn->rollBack();
+    throw $e;
+  }
+  // Yay. Success.
+  unset($txn);
 
   return TRUE;
 }
