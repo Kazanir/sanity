@@ -2,6 +2,9 @@
 
 // Hooks
 
+// Load sanity hooks for core modules
+require_once 'sanity.core.inc';
+
 /**
  * Implements hook_hook_info().
  */
@@ -391,7 +394,8 @@ function sanity_settings_form($form, &$form_state) {
 
 function sanity_additional_emails_value($element, $input = FALSE, &$form_state) {
   if ($input === FALSE) {
-    return implode("\n", $element['#default_value']);
+    return ($element['#default_value']
+      ? implode("\n", $element['#default_value']) : '');
   }
   else {
     return $element['#value'];
@@ -524,5 +528,3 @@ function dblog_sanity_prepare($wd) {
 
   return $o;
 }
-
-

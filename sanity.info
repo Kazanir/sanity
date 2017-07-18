@@ -5,5 +5,4 @@ php = 5.4
 core = 7.x
 package = Administration
 configure = admin/reports/sanity/settings
-
-
+files[] = sanity.core.inc
